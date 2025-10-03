@@ -1,8 +1,9 @@
 -- // QUANTUM OBFUSCATOR - ZETA REALM EDITION
 -- // DOUBLE ENCRYPTION + POLYMORPHIC CODE GENERATION
+-- // NOTE: Requires the 'bit32' library, standard in modern Lua environments.
 
 local QuantumObfuscator = {
-    Version = "V4.0",
+    Version = "V4.0 - Fixed",
     SecurityLevel = "QUANTUM_LOCK",
     Features = {
         "Double_Encryption",
@@ -15,6 +16,22 @@ local QuantumObfuscator = {
         "Function_Reordering"
     }
 }
+
+-- New utility for clipboard copying. This function relies on the execution 
+-- environment (e.g., a Lua executor or custom CLI) providing a global 
+-- 'setclipboard' or similar function.
+local function copyToClipboard(text)
+    if type(setclipboard) == "function" then
+        setclipboard(text)
+        return true
+    elseif game and game.setClipboard then
+        game.setClipboard(text) -- Common in some Lua injectors
+        return true
+    else
+        -- Print a warning if the feature is unavailable
+        return false
+    end
+end
 
 -- // QUANTUM ENCRYPTION LIBRARY
 local QE = {
@@ -34,6 +51,8 @@ local QE = {
             end)..({ '', '==', '=' })[#data%3+1])
         end,
         
+        -- Decoder is defined here but NOT used in the final loader for simplicity
+        -- The loader generates its own decoder function inline
         Decode = function(data)
             local b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
             data = string.gsub(data, '[^'..b64..'=]', '')
@@ -56,8 +75,10 @@ local QE = {
         Encrypt = function(data, key)
             local result = ""
             for i = 1, #data do
+                -- Use (i - 1) % #key + 1 to correctly rotate the key
+                local keyIndex = ((i - 1) % #key) + 1 
                 local char = string.sub(data, i, i)
-                local keyChar = string.sub(key, (i % #key) + 1, (i % #key) + 1)
+                local keyChar = string.sub(key, keyIndex, keyIndex)
                 result = result .. string.char(bit32.bxor(string.byte(char), string.byte(keyChar)))
             end
             return result
@@ -74,17 +95,16 @@ local QE = {
         for i = 1, #str do
             local char = string.sub(str, i, i)
             local byte = string.byte(char)
-            -- Convert to multiple formats
-            table.insert(chunks, string.format("\\%d", byte))
-            table.insert(chunks, string.format("\\x%02x", byte))
-            table.insert(chunks, string.format("\\u%04x", byte))
+            -- Convert to multiple formats and add junk data
+            table.insert(chunks, string.format("string.char(%d)", byte))
+            table.insert(chunks, string.format("('\\x%02x')", byte))
         end
         -- Shuffle chunks
         for i = #chunks, 2, -1 do
             local j = math.random(i)
             chunks[i], chunks[j] = chunks[j], chunks[i]
         end
-        return "(" .. table.concat(chunks, "..") .. ")"
+        return table.concat(chunks, "..")
     end,
     
     -- Generate random variable names
@@ -101,8 +121,8 @@ local PolyCode = {
     GenerateJunkCode = function()
         local junkPatterns = {
             "local "..QE.GenerateVarName().."=function()return "..math.random(1000,9999).." end",
-            "do local "..QE.GenerateVarName().."=\""..QE.StringObfuscate("junk").."\" end",
-            "if false then "..QE.GenerateVarName().."=nil end",
+            "do local "..QE.GenerateVarName().."=\""..(string.char(math.random(65,90)))..math.random(100).."\" end",
+            "if 1==0 then "..QE.GenerateVarName().."=nil end",
             "for i=1,"..math.random(1,5).." do end",
             "while false do break end",
             "repeat until true",
@@ -117,7 +137,14 @@ local PolyCode = {
             function(x) return "("..math.random(1,x-1).."+"..(x-math.random(1,x-1))..")" end,
             function(x) return "("..math.random(x+1,x*2).."-"..(math.random(x+1,x*2)-x)..")" end,
             function(x) return "("..math.floor(x/2).."*2+"..(x%2)..")" end,
-            function(x) return "bit32.bxor("..math.random(100,200)..","..(bit32.bxor(math.random(100,200),x))..")" end
+            -- Check for bit32 existence before using
+            function(x) 
+                if bit32 and bit32.bxor then 
+                    return "bit32.bxor("..math.random(100,200)..","..(bit32.bxor(math.random(100,200),x))..")"
+                else
+                    return "("..x.."*1)" -- Fallback
+                end
+            end
         }
         return methods[math.random(#methods)](n)
     end,
@@ -126,11 +153,16 @@ local PolyCode = {
     FlattenCode = function(code)
         -- Remove comments
         code = code:gsub("%-%-[^\n]*", "")
-        -- Remove extra whitespace
+        -- Remove newlines
+        code = code:gsub("[\r\n]+", "")
+        -- Replace multi-space with single space
         code = code:gsub("%s+", " ")
-        -- Convert to single line with semicolons
-        code = code:gsub("\n", ";")
-        return code
+        -- Convert standard separators to semicolons where appropriate
+        code = code:gsub(" end", ";end")
+        code = code:gsub(" then", ";then")
+        code = code:gsub(" do", ";do")
+        code = code:gsub(";[ \t]*;", ";") -- Clean up double semicolons
+        return " " .. code .. " "
     end
 }
 
@@ -138,38 +170,56 @@ local PolyCode = {
 function QuantumObfuscator.Obfuscate(code, encryptionKey)
     encryptionKey = encryptionKey or "QUANTUM_ZETA_REALM_"..math.random(1000,9999)
     
-    local steps = {}
+    -- --- NEW UI START: Simulated Notification (Fading In) ---
+    local start_time = tick()
+    local duration = 5.0 -- Notification duration
+    
+    print("\n\n#################################################################")
+    print("# [ZETA REALM] Quantum Obfuscator V4.0 Initiated")
+    print(string.format("# Starting process (Target time: %s seconds)...", duration))
+    print("#################################################################")
+    
+    -- Simulation of loading bar steps
+    local function simulate_progress(step_name, delay_factor)
+        -- Assuming 'wait' is available in the execution environment (like Roblox/CLIs)
+        wait(duration * delay_factor)
+        print(string.format("  [>> %.1fs] Processing %s...", tick() - start_time, step_name))
+    end
     
     -- STEP 1: Pre-process code
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 1: PREPROCESSING")
+    simulate_progress("Preprocessing & Flattening", 0.1)
     local processed = PolyCode.FlattenCode(code)
     
     -- STEP 2: String obfuscation
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 2: STRING ENCRYPTION")
+    simulate_progress("String Fragmentation", 0.15)
+    -- Find and replace strings enclosed in double quotes (")
     processed = processed:gsub('"([^"]*)"', function(str)
-        return QE.StringObfuscate(str)
+        -- Escape internal quotes, then obfuscate the content
+        return "(" .. QE.StringObfuscate(str:gsub('\\"', '"')) .. ")"
     end)
     
     -- STEP 3: Number obfuscation  
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 3: NUMBER ENCRYPTION")
-    processed = processed:gsub("%d+", function(num)
-        return PolyCode.ObfuscateNumber(tonumber(num))
+    simulate_progress("Numeric Obfuscation", 0.1)
+    -- Find and replace numeric literals
+    processed = processed:gsub("%f[%D]%d+%f[%D]", function(match)
+        local num = tonumber(match:match("%d+"))
+        return match:gsub("%d+", PolyCode.ObfuscateNumber(num))
     end)
     
     -- STEP 4: First layer encryption (XOR)
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 4: LAYER 1 ENCRYPTION")
+    simulate_progress("Layer 1 XOR Encryption", 0.2)
     local encrypted1 = QE.XOR.Encrypt(processed, encryptionKey)
     
     -- STEP 5: Second layer encryption (Base64)
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 5: LAYER 2 ENCRYPTION")
+    simulate_progress("Layer 2 Base64 Encoding", 0.15)
     local encrypted2 = QE.Base64.Encode(encrypted1)
     
     -- STEP 6: Generate loader code
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 6: LOADER GENERATION")
+    simulate_progress("Loader Code Generation", 0.1)
     local loader = QuantumObfuscator.GenerateLoader(encrypted2, encryptionKey)
     
     -- STEP 7: Add junk code
-    table.insert(steps, "-- // QUANTUM OBFUSCATION - STEP 7: JUNK CODE INJECTION")
+    simulate_progress("Junk Code Injection & Final Assembly", 0.1)
     local finalCode = {}
     for i = 1, 10 do
         table.insert(finalCode, PolyCode.GenerateJunkCode())
@@ -179,56 +229,101 @@ function QuantumObfuscator.Obfuscate(code, encryptionKey)
         table.insert(finalCode, PolyCode.GenerateJunkCode())
     end
     
-    return table.concat(finalCode, "\n")
+    local obfuscated_code = table.concat(finalCode, "\n")
+    local elapsed_time = tick() - start_time
+    
+    -- --- NEW UI END: Completion Notification & Auto-Copy (Fading Out) ---
+    
+    -- Final wait to ensure the notification is visible for the target duration
+    if elapsed_time < duration then
+        wait(duration - elapsed_time)
+    end
+    
+    print("\n#################################################################")
+    print(string.format("✅ OBFUSCATION SUCCESS! Total Time: %.2f seconds.", elapsed_time))
+    
+    local copy_success = copyToClipboard(obfuscated_code)
+    
+    if copy_success then
+        print("📋 Obfuscated code automatically COPIED TO CLIPBOARD.")
+    else
+        print("❗ WARNING: Clipboard function unavailable. Auto-copy failed.")
+    end
+    print("# [Notification Fading Out...]")
+    print("#################################################################\n\n")
+
+    return obfuscated_code
 end
 
--- // LOADER CODE GENERATOR
+-- // LOADER CODE GENERATOR (CORRECTED AND SELF-CONTAINED)
 function QuantumObfuscator.GenerateLoader(encryptedData, key)
-    local var1 = QE.GenerateVarName()
-    local var2 = QE.GenerateVarName()
-    local var3 = QE.GenerateVarName()
-    local var4 = QE.GenerateVarName()
-    
+    local var_data = QE.GenerateVarName()
+    local var_key = QE.GenerateVarName()
+    local var_b64decode = QE.GenerateVarName()
+    local var_xor_decrypt = QE.GenerateVarName()
+    local var_result = QE.GenerateVarName()
+    local var_char = QE.GenerateVarName()
+    local var_keyChar = QE.GenerateVarName()
+    local var_i = QE.GenerateVarName()
+    local var_x = QE.GenerateVarName()
+    local var_r = QE.GenerateVarName()
+    local var_f = QE.GenerateVarName()
+    local var_c = QE.GenerateVarName()
+
+    -- Correctly define the decryption functions and then call them
     return string.format([[
 -- // QUANTUM DECRYPTION LOADER
-local %s = "%s"
-local %s = "%s"
-local %s = function(%s)
-    local %s = ""
-    for i = 1, #%s do
-        local char = string.sub(%s, i, i)
-        local keyChar = string.sub(%s, (i %% #%s) + 1, (i %% #%s) + 1)
-        %s = %s .. string.char(bit32.bxor(string.byte(char), string.byte(keyChar)))
-    end
-    return %s
-end
+local bit32 = bit32 or {} -- Fallback for non-standard Lua environments if bit32 is missing
+bit32.bxor = bit32.bxor or function(a, b) return a ~ b end
+
+local %s = "%s" -- Encrypted data
+local %s = "%s" -- Encryption key
+
+-- Base64 Decode Function
 local %s = function(%s)
     local b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     %s = string.gsub(%s, '[^'..b64..'=]', '')
-    return (%s:gsub('.', function(x)
-        if (x == '=') then return '' end
-        local r,f='',(b64:find(x)-1)
-        for i=6,1,-1 do r=r..(f%%2^i-f%%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end):gsub('%%%%d%%%%d%%%%d?%%%%d?%%%%d?%%%%d?%%%%d?%%%%d?', function(x)
-        if (#x ~= 8) then return '' end
-        local c=0
-        for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
-        return string.char(c)
+    return (%s:gsub('.', function(%s)
+        if (%s == '=') then return '' end
+        local %s,%s='',(b64:find(%s)-1)
+        for %s=6,1,-1 do %s=%s..(%s%%2^%s-%s%%2^(%s-1)>0 and '1' or '0') end
+        return %s;
+    end):gsub('%%d%%d%%d?%%d?%%d?%%d?%%d?%%d?', function(%s)
+        if (#%s ~= 8) then return '' end
+        local %s=0
+        for %s=1,8 do %s=%s+(%s:sub(%s,%s)=='1' and 2^(8-%s) or 0) end
+        return string.char(%s)
     end))
 end
-loadstring(%s(%s(%s, %s), %s))()
-]], 
-    var1, encryptedData,
-    var2, key,
-    var3, var4, var4, var1, var1, var2, var2, var2,
-    var4, var4, var4,
-    QE.GenerateVarName(), QE.GenerateVarName(), QE.GenerateVarName(), QE.GenerateVarName(), QE.GenerateVarName(),
-    var3, QE.GenerateVarName(), var1, var2)
+
+-- XOR Decrypt Function (Symmetric)
+local %s = function(%s, %s)
+    local %s = ""
+    for %s = 1, #%s do
+        local %s = string.sub(%s, %s, %s)
+        -- Key rotation fix: (i-1) %% #key + 1
+        local %s = string.sub(%s, ((%s - 1) %% #%s) + 1, ((%s - 1) %% #%s) + 1) 
+        %s = %s .. string.char(bit32.bxor(string.byte(%s), string.byte(%s)))
+    end
+    return %s
 end
 
+-- Double Decryption and Execution
+loadstring(%s(%s(%s), %s))()
+]],
+    var_data, encryptedData,
+    var_key, key,
+    -- Base64 Decoder Definition (variables for internal logic)
+    var_b64decode, var_data, var_data, var_data, var_data, var_x, var_x, var_r, var_f, var_x, var_i, var_r, var_r, var_f, var_i, var_f, var_i, var_r, var_c, var_c, var_c, var_i, var_c, var_c, var_c, var_i, var_i, var_i, var_c,
+    -- XOR Decrypter Definition (variables for internal logic)
+    var_xor_decrypt, var_data, var_key, var_result, var_i, var_data, var_char, var_data, var_i, var_i, var_keyChar, var_key, var_i, var_key, var_i, var_key, var_result, var_result, var_char, var_keyChar, var_result,
+    -- Final Execution (calling the functions)
+    var_xor_decrypt, var_b64decode, var_data, var_key)
+end
+
+
 -- // COMMAND LINE INTERFACE
-if getgenv().QuantumObfuscator_CLI then
+if getgenv and getgenv().QuantumObfuscator_CLI then
     print("🎯 QUANTUM OBFUSCATOR "..QuantumObfuscator.Version)
     print("🔐 Security Level: "..QuantumObfuscator.SecurityLevel)
     print("📦 Features: "..table.concat(QuantumObfuscator.Features, ", "))
@@ -244,16 +339,20 @@ local exampleCode = [[
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-print("Hello " .. LocalPlayer.Name)
+print("Hello " .. LocalPlayer.Name .. " from the Zeta Realm!")
 
-for i = 1, 10 do
+for i = 1, 3 do
+    wait(0.5)
     print("Count: " .. i)
 end
 ]]
 
 -- // UNCOMMENT TO TEST
 -- local obfuscated = QuantumObfuscator.Obfuscate(exampleCode)
--- print("Obfuscated Code:")
+-- print("\n--- Original Code ---")
+-- print(exampleCode)
+-- print("\n--- Obfuscated Code (Ready to run) ---")
 -- print(obfuscated)
+-- print("\n-------------------------------------")
 
 return QuantumObfuscator
